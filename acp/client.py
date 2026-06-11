@@ -7,7 +7,7 @@ backend process is not running or becomes unreachable mid-session.
 
 import json
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from .config import ACPConfig
 from .launcher import ACPLauncher
@@ -24,16 +24,37 @@ class ACPClient:
 
     Usage::
 
+        # Direct lifecycle:
         client = ACPClient(config)
         client.connect()         # start backend + handshake
-        resp = client.chat(...)
+        reply = client.chat(messages=[{"role": "user", "content": "Hi"}])
         client.disconnect()      # clean shutdown
+
+        # Context manager (preferred):
+        with ACPClient(config) as client:
+            reply = client.chat(messages=[{"role": "user", "content": "Hi"}])
+
+    ``chat()`` returns the assistant's text string extracted from the first
+    choice.  Additional keyword arguments (``temperature``, ``max_tokens``,
+    etc.) are forwarded verbatim in the JSON-RPC params.
     """
 
     def __init__(self, config: ACPConfig):
         self.config = config
         self._launcher = ACPLauncher(config)
         self._request_id = 0
+
+    # ------------------------------------------------------------------
+    # Context manager
+    # ------------------------------------------------------------------
+
+    def __enter__(self) -> "ACPClient":
+        self.connect()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.disconnect()
+        return None  # do not suppress exceptions
 
     # ------------------------------------------------------------------
     # Connection lifecycle
@@ -76,6 +97,47 @@ class ACPClient:
         return self._launcher.is_running()
 
     # ------------------------------------------------------------------
+    # High-level API
+    # ------------------------------------------------------------------
+
+    def chat(
+        self,
+        messages: List[Dict[str, str]],
+        model: Optional[str] = None,
+        **kwargs: Any,
+    ) -> str:
+        """Send a chat completion request and return the assistant reply text.
+
+        Args:
+            messages: List of ``{"role": ..., "content": ...}`` dicts.
+            model: Optional model identifier forwarded to the ACP backend.
+            **kwargs: Extra params forwarded verbatim (e.g. temperature,
+                max_tokens).
+
+        Returns:
+            The assistant's reply as a plain string (first choice, message
+            content).
+
+        Raises:
+            ACPBackendError: if the backend is not running, the pipe breaks,
+                the backend returns a JSON-RPC error, or the response cannot
+                be parsed.
+        """
+        params: Dict[str, Any] = {"messages": messages}
+        if model is not None:
+            params["model"] = model
+        params.update(kwargs)
+
+        result = self._send_request("chat/completions", params)
+        # Extract first choice's message content
+        try:
+            return result["result"]["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, TypeError) as exc:
+            raise ACPBackendError(
+                f"Unexpected chat response shape from ACP backend: {result!r}"
+            ) from exc
+
+    # ------------------------------------------------------------------
     # JSON-RPC helpers
     # ------------------------------------------------------------------
 
@@ -88,7 +150,8 @@ class ACPClient:
 
         Raises:
             ACPBackendError: if the backend is not running, pipe breaks,
-                or the backend closes stdout unexpectedly.
+                the backend closes stdout unexpectedly, the response is not
+                valid JSON, or the response contains a JSON-RPC error object.
         """
         if not self._launcher.is_running():
             raise ACPBackendError(
@@ -110,11 +173,29 @@ class ACPClient:
             line = proc.stdout.readline()
         except (BrokenPipeError, OSError) as exc:
             raise ACPBackendError(f"ACP backend pipe error: {exc}") from exc
+
         if not line:
             raise ACPBackendError(
                 "ACP backend closed stdout unexpectedly — process may have crashed"
             )
-        return json.loads(line.strip())
+
+        try:
+            response = json.loads(line.strip())
+        except json.JSONDecodeError as exc:
+            raise ACPBackendError(
+                f"ACP backend returned malformed JSON: {line.strip()!r}"
+            ) from exc
+
+        # Surface JSON-RPC error objects as ACPBackendError
+        if "error" in response:
+            err = response["error"]
+            msg = err.get("message", str(err))
+            code = err.get("code", "")
+            raise ACPBackendError(
+                f"ACP backend returned JSON-RPC error (code {code}): {msg}"
+            )
+
+        return response
 
     def _handshake(self) -> None:
         """Perform the ACP initialize handshake with the backend."""
