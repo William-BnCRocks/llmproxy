@@ -177,7 +177,7 @@ def test_send_request_increments_id(config):
 # ---------------------------------------------------------------------------
 
 def test_chat_sends_correct_jsonrpc_method(config):
-    """chat() sends a JSON-RPC request with method 'chat/completions'."""
+    """chat() sends a JSON-RPC request with method 'chat/complete'."""
     resp = json.dumps({
         "jsonrpc": "2.0",
         "id": 1,
@@ -194,13 +194,13 @@ def test_chat_sends_correct_jsonrpc_method(config):
 
     written = mock_launcher.process.stdin.write.call_args[0][0]
     msg = json.loads(written)
-    assert msg["method"] == "chat/completions"
+    assert msg["method"] == "chat/complete"
     assert msg["params"]["messages"] == messages
     assert msg["params"]["model"] == "cursor-default"
 
 
 def test_chat_returns_assistant_content(config):
-    """chat() extracts and returns the assistant reply text."""
+    """chat() returns an OpenAI-compatible result dict with choices."""
     content = "The answer is 42."
     resp = json.dumps({
         "jsonrpc": "2.0",
@@ -214,7 +214,8 @@ def test_chat_returns_assistant_content(config):
     client._launcher = mock_launcher
 
     result = client.chat(messages=[{"role": "user", "content": "?"}])
-    assert result == content
+    # chat() returns the full OpenAI-compatible result dict
+    assert result["choices"][0]["message"]["content"] == content
 
 
 def test_chat_raises_on_backend_not_running(config):

@@ -5,6 +5,7 @@ JSON-RPC handshake.  All public calls raise ACPBackendError if the
 backend process is not running or becomes unreachable mid-session.
 """
 
+import concurrent.futures
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -103,39 +104,37 @@ class ACPClient:
     def chat(
         self,
         messages: List[Dict[str, str]],
-        model: Optional[str] = None,
+        model: str = "",
+        timeout: Optional[float] = None,
         **kwargs: Any,
-    ) -> str:
-        """Send a chat completion request and return the assistant reply text.
+    ) -> Dict[str, Any]:
+        """Send a chat completion request to the ACP backend.
+
+        Translates OpenAI-style chat arguments into a JSON-RPC
+        ``chat/complete`` call and returns the full OpenAI-compatible
+        response dict from the backend.
 
         Args:
             messages: List of ``{"role": ..., "content": ...}`` dicts.
-            model: Optional model identifier forwarded to the ACP backend.
+            model: Model identifier forwarded to the ACP backend.
+            timeout: Optional per-call timeout in seconds.  If the backend
+                does not respond within this window, raises ACPBackendError.
             **kwargs: Extra params forwarded verbatim (e.g. temperature,
                 max_tokens).
 
         Returns:
-            The assistant's reply as a plain string (first choice, message
-            content).
+            OpenAI-compatible ``chat.completion`` dict (the ``result``
+            field of the JSON-RPC response).
 
         Raises:
             ACPBackendError: if the backend is not running, the pipe breaks,
-                the backend returns a JSON-RPC error, or the response cannot
-                be parsed.
+                or the backend returns a JSON-RPC error.
         """
-        params: Dict[str, Any] = {"messages": messages}
-        if model is not None:
-            params["model"] = model
-        params.update(kwargs)
-
-        result = self._send_request("chat/completions", params)
-        # Extract first choice's message content
-        try:
-            return result["result"]["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise ACPBackendError(
-                f"Unexpected chat response shape from ACP backend: {result!r}"
-            ) from exc
+        params: Dict[str, Any] = {"model": model, "messages": messages, **kwargs}
+        response = self._send_request("chat/complete", params, timeout=timeout)
+        # _send_request already raises ACPBackendError on JSON-RPC error objects;
+        # return the result payload directly.
+        return response.get("result", response)
 
     # ------------------------------------------------------------------
     # JSON-RPC helpers
@@ -145,13 +144,26 @@ class ACPClient:
         self._request_id += 1
         return self._request_id
 
-    def _send_request(self, method: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _send_request(
+        self,
+        method: str,
+        params: Dict[str, Any],
+        timeout: Optional[float] = None,
+    ) -> Dict[str, Any]:
         """Send a single JSON-RPC request and read the response line.
+
+        Args:
+            method: JSON-RPC method name.
+            params: JSON-RPC params dict.
+            timeout: Optional timeout in seconds for the full round-trip.
+                Raises ACPBackendError with "timed out" in the message when
+                the backend does not respond within the budget.
 
         Raises:
             ACPBackendError: if the backend is not running, pipe breaks,
                 the backend closes stdout unexpectedly, the response is not
-                valid JSON, or the response contains a JSON-RPC error object.
+                valid JSON, the response contains a JSON-RPC error object,
+                or the call times out.
         """
         if not self._launcher.is_running():
             raise ACPBackendError(
@@ -170,7 +182,35 @@ class ACPClient:
         try:
             proc.stdin.write(json.dumps(req) + "\n")
             proc.stdin.flush()
-            line = proc.stdout.readline()
+        except (BrokenPipeError, OSError) as exc:
+            raise ACPBackendError(f"ACP backend pipe error: {exc}") from exc
+
+        # Read response with optional timeout via a thread so we can interrupt
+        # the blocking readline() without needing async I/O.
+        def _read_line() -> str:
+            return proc.stdout.readline()  # type: ignore[union-attr]
+
+        try:
+            pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            future = pool.submit(_read_line)
+            try:
+                line = future.result(timeout=timeout)
+            except concurrent.futures.TimeoutError as exc:
+                # Kill and clean up so the process doesn't linger; the thread
+                # is stuck in readline() which will unblock once the process
+                # stdout is closed by stop().
+                try:
+                    self._launcher.stop()
+                except Exception:
+                    pass
+                pool.shutdown(wait=False)
+                raise ACPBackendError(
+                    f"ACP backend timed out after {timeout}s — no response received"
+                ) from exc
+            finally:
+                pool.shutdown(wait=False)
+        except ACPBackendError:
+            raise
         except (BrokenPipeError, OSError) as exc:
             raise ACPBackendError(f"ACP backend pipe error: {exc}") from exc
 

@@ -1,6 +1,6 @@
 """Tests for ACP config schema."""
 
-from llmproxy.acp.config import ACPConfig
+from acp.config import ACPConfig
 
 
 def test_acp_config_parsing():
