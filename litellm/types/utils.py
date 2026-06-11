@@ -3319,6 +3319,7 @@ class LlmProviders(str, Enum):
     MILVUS = "milvus"
     GROQ = "groq"
     A2A = "a2a"
+    ACP = "acp"
     GIGACHAT = "gigachat"
     NVIDIA_NIM = "nvidia_nim"
     NVIDIA_RIVA = "nvidia_riva"

@@ -252,6 +252,8 @@ from .llms.vertex_ai.vertex_gemma_models.main import VertexAIGemmaModels
 from .llms.vertex_ai.vertex_model_garden.main import VertexAIModelGardenModels
 from .llms.vllm.completion import handler as vllm_handler
 from .llms.watsonx.chat.handler import WatsonXChatHandler
+# ACP (Agent Communication Protocol) provider — stdio JSON-RPC to Cursor/Claude backends
+from .llms.acp.completion import acp_completion as _acp_completion_handler
 from .llms.watsonx.common_utils import IBMWatsonXMixin
 from .types.llms.anthropic import AnthropicThinkingParam
 from .types.llms.openai import (
@@ -1081,6 +1083,21 @@ def _build_custom_pricing_entry(
                 entry.setdefault(key, model_info[key])
 
     return entry
+
+
+def _acp_completion(
+    model: str,
+    messages,
+    acp_config,
+    **kwargs,
+):
+    """Dispatch a chat completion to the ACP backend.
+
+    This is a thin shim so litellm.main can call _acp_completion() and the
+    test suite can patch it at 'litellm.main._acp_completion'.
+    """
+    from .llms.acp.completion import acp_completion as _handler
+    return _handler(model=model, messages=messages, acp_config=acp_config, **kwargs)
 
 
 @tracer.wrap()
@@ -2252,6 +2269,49 @@ def completion(  # type: ignore # noqa: PLR0915
                     api_key=api_key,
                     original_response=str(e),
                     additional_args={"headers": headers},
+                )
+                raise e
+
+        elif custom_llm_provider == "acp":
+            # ACP (Agent Communication Protocol) — stdio JSON-RPC to Cursor/Claude backends.
+            # The caller must supply an ACPConfig via litellm_params["acp_config"] or as a
+            # direct kwarg.  Model names may carry an optional "acp/" prefix which is stripped
+            # before forwarding to the backend.
+            #
+            # Proxy config.yaml example:
+            #   model_list:
+            #     - model_name: acp-cursor
+            #       litellm_params:
+            #         model: acp/cursor-default
+            #         custom_llm_provider: acp
+            #         acp_config:
+            #           backend: cursor
+            #           command: ["cursor", "--acp"]
+            #           args: []
+            #
+            # See docs/acp-provider.md and AGENTS.md for full usage.
+            try:
+                _acp_cfg = (
+                    litellm_params.get("acp_config")
+                    if isinstance(litellm_params, dict)
+                    else getattr(litellm_params, "acp_config", None)
+                ) or kwargs.get("acp_config")
+                # Ensure acp_config doesn't appear twice: remove from optional_params
+                # (litellm propagates unknown kwargs into optional_params)
+                _acp_optional = {k: v for k, v in optional_params.items() if k != "acp_config"}
+                response = _acp_completion(
+                    model=model,
+                    messages=messages,
+                    acp_config=_acp_cfg,
+                    **_acp_optional,
+                )
+                response = litellm.ModelResponse(**response) if isinstance(response, dict) else response
+            except Exception as e:
+                logging.post_call(
+                    input=messages,
+                    api_key=api_key,
+                    original_response=str(e),
+                    additional_args={},
                 )
                 raise e
 

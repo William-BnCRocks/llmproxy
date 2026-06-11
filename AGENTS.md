@@ -48,3 +48,25 @@ client.disconnect()    # graceful shutdown
 broken pipe, malformed JSON response, JSON-RPC error object in response, or
 calling chat() while not connected.  Task 5 (routing wire-up) should import
 `ACPClient` + `ACPBackendError` from `acp.client` and `ACPConfig` from `acp.config`.
+**Completed via t_5d4dc60c (Task 5):** ACP backend wired into OpenAI-compatible `/v1/chat/completions` routing and Hermes llmproxy provider registration.
+
+### ACP Provider Wiring (Task 5)
+
+New files:
+- `litellm/llms/acp/__init__.py` — package re-exports
+- `litellm/llms/acp/completion.py` — `acp_completion()` handler + async wrapper
+- `docs/acp-provider.md` — full config/usage reference
+- `tests/test_acp_litellm_integration.py` — 13 TDD integration tests
+
+Modified files:
+- `litellm/main.py` — `_acp_completion()` shim + `elif custom_llm_provider == "acp"` dispatch branch
+- `litellm/types/utils.py` — `LlmProviders.ACP = "acp"` enum entry
+
+Provider detection (two ways):
+1. `custom_llm_provider="acp"` in litellm_params
+2. Model name prefixed with `"acp/"` (e.g. `"acp/cursor-default"`)
+
+Hermes registration: hermes-llmproxy plugin already registers `ProviderProfile(name="llmproxy", base_url="http://127.0.0.1:8766/v1")`. No changes required in hermes-llmproxy for basic chat routing.
+
+Tests: 56 ACP tests total, all passing. See `pytest tests/test_acp*.py -q`.
+Full config example: `docs/acp-provider.md`.
