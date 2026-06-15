@@ -1,0 +1,121 @@
+version: 1
+# llmproxy Hermes swarm configuration
+# Defines the agents and workflow for this project.
+# PR review comments -> orchestrator creates follow-up Kanban tasks for implementer.
+# Canonical webhook: https://webhooks.hermes.bnc.rocks/webhooks/github-pr-kanban
+# Board: llmproxy (William-BnCRocks/llmproxy -> board slug: llmproxy)
+
+workers:
+- id: orchestrator
+  name: Orchestrator
+  role: Swarm Orchestrator / Kanban Router
+  specialty: task decomposition, PR review routing, handoffs
+  profile: orchestrator
+  mission: >
+    Watch the llmproxy board. On PR review comments from GitHub, create
+    follow-up Kanban tasks for the builder with the exact fixes required.
+    Follow github-pr-workflow — address ALL inline and formal comments.
+  tools:
+  - kanban
+  - terminal
+  - delegation
+  - file
+  - session_search
+  - skills
+  skills:
+  - kanban-orchestrator
+  - github-pr-to-kanban
+  - github-pr-workflow
+  - writing-plans
+  capabilities:
+  - orchestration
+  - routing
+  - pr-review-triage
+  preferredTaskTypes:
+  - orchestration
+  - planning
+  - routing
+  - pr-review
+  maxConcurrentTasks: 1
+
+- id: builder
+  name: Builder
+  role: Implementation Agent
+  specialty: focused implementation, TDD, ACP client, integration
+  profile: builder
+  mission: >
+    Implement tasks on the llmproxy board. Address ALL PR review comments
+    per github-pr-workflow skill before marking done. Follow TDD. Push
+    and re-query open comments after every fix.
+  tools:
+  - terminal
+  - file
+  - web
+  - session_search
+  - skills
+  - todo
+  skills:
+  - test-driven-development
+  - systematic-debugging
+  - github-pr-workflow
+  - requesting-code-review
+  capabilities:
+  - implementation
+  - code-editing
+  - tests
+  - integration
+  preferredTaskTypes:
+  - implementation
+  - bugfix
+  - feature
+  - review-fix
+  greenlightRequiredFor:
+  - merge
+  - push
+  - destructive
+  maxConcurrentTasks: 1
+
+- id: reviewer
+  name: Reviewer
+  role: PR Review / Merge Gate
+  specialty: code review, security, logic, quality gates
+  profile: reviewer
+  mission: >
+    Review PRs in this repo. Leave inline and formal review comments.
+    Do NOT approve until all concerns are addressed.
+  tools:
+  - terminal
+  - file
+  - web
+  - session_search
+  - skills
+  skills:
+  - github-code-review
+  - requesting-code-review
+  - systematic-debugging
+  capabilities:
+  - code-review
+  - security-review
+  - quality-gate
+  preferredTaskTypes:
+  - review
+  - qa
+  - verification
+  greenlightRequiredFor:
+  - approve-merge
+  maxConcurrentTasks: 1
+
+webhooks:
+  github_pr_review:
+    url: https://webhooks.hermes.bnc.rocks/webhooks/github-pr-kanban
+    events:
+    - pull_request
+    - pull_request_review
+    - pull_request_review_comment
+    - pull_request_review_thread
+    description: >
+      On review comments, receiver creates a [review-fix] follow-up task
+      on the llmproxy board assigned to builder with the exact comment
+      content (inline path/line + body). Approved reviews skip task creation.
+
+board: llmproxy

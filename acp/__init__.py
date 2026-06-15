@@ -1,0 +1,1 @@
+"""ACP client package for llmproxy (Cursor/Claude backends)."""
