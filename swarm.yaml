@@ -2,8 +2,8 @@ version: 1
 # llmproxy Hermes swarm configuration
 # Defines the agents and workflow for this project.
 # PR review comments -> orchestrator creates follow-up Kanban tasks for implementer.
-# Canonical webhook: https://webhooks.hermes.bnc.rocks/webhooks/github-pr-kanban
-# Board: llmproxy (William-BnCRocks/llmproxy -> board slug: llmproxy)
+# Canonical webhook: the fleet receiver's /webhooks/github-pr-kanban endpoint
+# Board: llmproxy (board slug matches the repo name)
 
 workers:
 - id: orchestrator

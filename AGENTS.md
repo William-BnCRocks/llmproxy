@@ -12,7 +12,7 @@ Read @CLAUDE.md for coding guidelines
 
 ## Development Workflow
 - All work on dedicated `llmproxy` Kanban board (not default).
-- Orchestrator watches board + GitHub PR webhooks (canonical https://webhooks.hermes.bnc.rocks/webhooks/github-pr-kanban).
+- Orchestrator watches board + GitHub PR webhooks (canonical: the fleet receiver's /webhooks/github-pr-kanban endpoint).
 - On PR review comments (inline or formal), orchestrator creates follow-up Kanban task for original implementer with exact fixes listed. Address *all* comments per github-pr-workflow skill before marking done.
 - Use git worktrees (main clean, -dev active). Update this AGENTS.md on every non-trivial change.
 - Private repos only. Frequent commits with verification.
